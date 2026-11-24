@@ -75,6 +75,30 @@ int main(int argc, char** argv) {
     bool ok = wait_for(all, 5000);
     printf("1. joined: %s\n", ok ? "yes" : "NO");
     if (!ok) return 2;
+    // every ordered pair of members: n messages, the last one awaited (the 3-player case also checks the pairs that are never cut)
+    std::vector<CoopChannel*> ch = {&a, &b};
+    if (c) ch.push_back(c.get());
+    uint32_t next_type = 100;
+    auto pairs = [&](const char* when, int n) {
+        int failed = 0;
+        for (size_t from = 0; from < ch.size(); ++from)
+            for (size_t to = 0; to < ch.size(); ++to) {
+                if (from == to) continue;
+                uint32_t type = 0;
+                for (int k = 0; k < n; ++k) {
+                    type = next_type++;
+                    ch[from]->send(static_cast<int>(to), type, std::make_shared<const std::vector<uint8_t>>(std::vector<uint8_t>{1, 2, 3}));
+                }
+                const bool got = wait_for([&] { for (auto& it : ch[to]->take(256)) if (it.kind == CoopChannel::Item::kMessage && it.type == type) return true; return false; }, 3000);
+                printf("   node %zu -> node %zu %s: %s\n", from, to, when, got ? "yes" : "NO");
+                failed += got ? 0 : 1;
+            }
+        return failed == 0;
+    };
+    // traffic before the gap, as in a session: every stream has carried frames, so its sequence numbers are past the first
+    const bool before = pairs("before the gap (5 messages)", 5);
+    printf("1b. every pair talks before the gap: %s\n", before ? "yes" : "NO");
+    if (!before) return 2;
     puts("2. link silent for 7 s (both processes stay in the session)");
     net.cut = true; std::this_thread::sleep_for(milliseconds(7000)); net.cut = false;
     printf("   after the gap: host sees member %d, member sees host %d\n", has(a, 1), has(b, 0));
@@ -84,20 +108,8 @@ int main(int argc, char** argv) {
     printf("   churn after recovery: %d of 50 samples not all together\n", flaps);
     back = back && flaps == 0;
     printf("3. back together within 10 s of the link returning: %s\n", back ? "yes" : "NO");
-    // every ordered pair of members: a message gets through after the gap (the 3-player case also checks the pairs that were never cut)
-    std::vector<CoopChannel*> ch = {&a, &b};
-    if (c) ch.push_back(c.get());
-    int failed = 0;
-    for (size_t from = 0; back && from < ch.size(); ++from)
-        for (size_t to = 0; to < ch.size(); ++to) {
-            if (from == to) continue;
-            const uint32_t type = static_cast<uint32_t>(100 + from * 10 + to);
-            ch[from]->send(static_cast<int>(to), type, std::make_shared<const std::vector<uint8_t>>(std::vector<uint8_t>{1, 2, 3}));
-            const bool got = wait_for([&] { for (auto& it : ch[to]->take(256)) if (it.kind == CoopChannel::Item::kMessage && it.type == type) return true; return false; }, 3000);
-            printf("4. node %zu -> node %zu after the gap: %s\n", from, to, got ? "yes" : "NO");
-            failed += got ? 0 : 1;
-        }
-    const bool msg = back && failed == 0;
+    const bool msg = back && pairs("after the gap", 1);
+    printf("4. every pair talks after the gap: %s\n", msg ? "yes" : "NO");
     a.stop(); b.stop(); if (c) c->stop();
     puts(back && msg ? "PASS" : "FAIL");
     return back && msg ? 0 : 1;
