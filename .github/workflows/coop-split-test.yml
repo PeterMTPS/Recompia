@@ -16,8 +16,10 @@ jobs:
         run: |
           git fetch -q https://github.com/Dittobyte/Recompia.git main
           git worktree add -q /tmp/before FETCH_HEAD
-          for side in before after; do
-            src=$([ $side = before ] && echo /tmp/before || echo "$PWD")
+          git worktree add -q /tmp/issue FETCH_HEAD
+          git -C /tmp/issue apply "$PWD/tt827/2-channel-split.patch"
+          for side in before issue after; do
+            src=$(case $side in before) echo /tmp/before;; issue) echo /tmp/issue;; *) echo "$PWD";; esac)
             for t in test_split test_split_all_pairs; do
               g++ -std=c++20 -O1 -pthread -I"$src/runtime/src/net" -I"$src/runtime/include" tt827/$t.cpp tt827/stubs.cpp \
                 "$src/runtime/src/net/coop_channel.cpp" "$src/runtime/src/net/coop_stream.cpp" -o /tmp/$t-$side
@@ -27,7 +29,7 @@ jobs:
         run: |
           fail_after=0
           for t in test_split test_split_all_pairs; do
-            for side in before after; do
+            for side in before issue after; do
               for mode in 0 1 2; do
                 if timeout 120 /tmp/$t-$side $mode > /tmp/out.txt 2>&1; then r=PASS; else r=FAIL; fi
                 echo "== $t $side mode $mode: $r"
