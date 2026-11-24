@@ -1,0 +1,39 @@
+# Throwaway (fork only, never in a pull request): builds the #827 tests against Dittobyte/Recompia main and against this branch.
+name: coop split test
+on:
+  push:
+    branches: [ci/827-test]
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Build before (upstream main) and after (this branch)
+        run: |
+          git fetch -q https://github.com/Dittobyte/Recompia.git main
+          git worktree add -q /tmp/before FETCH_HEAD
+          for side in before after; do
+            src=$([ $side = before ] && echo /tmp/before || echo "$PWD")
+            for t in test_split test_split_all_pairs; do
+              g++ -std=c++20 -O1 -pthread -I"$src/runtime/src/net" -I"$src/runtime/include" tt827/$t.cpp tt827/stubs.cpp \
+                "$src/runtime/src/net/coop_channel.cpp" "$src/runtime/src/net/coop_stream.cpp" -o /tmp/$t-$side
+            done
+          done
+      - name: Run
+        run: |
+          fail_after=0
+          for t in test_split test_split_all_pairs; do
+            for side in before after; do
+              for mode in 0 1 2; do
+                if timeout 120 /tmp/$t-$side $mode > /tmp/out.txt 2>&1; then r=PASS; else r=FAIL; fi
+                echo "== $t $side mode $mode: $r"
+                grep -v '^  \[' /tmp/out.txt | sed 's/^/   /'
+                [ $side = after ] && [ $r = FAIL ] && fail_after=1
+              done
+            done
+          done
+          echo "== summary"; [ $fail_after = 0 ] && echo "after: every test passes" || { echo "after: a test fails"; exit 1; }
